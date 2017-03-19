@@ -1,0 +1,367 @@
+unit CTeApiFuncoes;
+
+interface
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, ComCtrls, StdCtrls, IdHTTP, ShellApi, IdCoderMIME;
+
+//Assinatura das funções
+function enviaConteudoParaAPI(token: String; conteudo:TStringStream; url:String; isTxt: boolean):String;
+function emitirCTe(token, conteudo: String; isTxt: boolean): String;
+function consultarStatusProcessamento(token, chCTe, nRec, tpAmb: String): String;
+function cancelaCTe(token, chCTe, tpAmb, nProt, xJust: String): String;
+function CCeCTe(token, chCTe, tpAmb, nSeqEvento, grupoAlterado, campoAlterado, valorAlterado, nroItemAlterado: String): String;
+function downloadCTe(token, chCTe, tpAmb, tpDown:String; exibeNaTela: boolean): String;
+function salvaXML(retorno, caminho, chCTe: String): String;
+function salvaJSON(retorno, caminho, chCTe: String): String;
+function salvaPDF(retorno, caminho, chCTe: String): String;
+
+implementation
+//Implementar as funções descritas na interface
+
+
+  //Função genérica de envio de um json para um url, contendo o token no header
+  function enviaConteudoParaAPI(token: String; conteudo:TStringStream; url:String; isTxt: boolean): String;
+  var
+    retorno: String;
+    HTTP: TIdHTTP;  //Disponível na aba 'Indy Servers'
+  begin
+    HTTP := TIdHTTP.Create(nil);
+
+    try
+      if isTxt then  //Informa que vai mandar um TXT
+      begin
+        HTTP.Request.ContentType := 'text/plain';
+      end
+      else	//Se for JSON
+      begin
+        HTTP.Request.ContentType := 'application/json';
+      end;
+      
+      //Avisa o uso de UTF-8
+      HTTP.Request.ContentEncoding := 'UTF-8';
+
+      //Adiciona o token ao header
+      HTTP.Request.CustomHeaders.Values['X-AUTH-TOKEN'] := token;
+    
+      //Faz o envio por POST do json para a url
+      try
+        retorno := HTTP.Post(url, conteudo);
+
+      except
+        on E:EIdHTTPProtocolException do
+        
+          Case HTTP.ResponseCode of
+          //Se o json conter algum erro
+            400: begin
+              retorno :=  '400: ' + e.ErrorMessage;
+              ShowMessage('Json inválido, verifique o retorno para mais informações');
+            end;
+            //Se o token não for enviado ou for inválido
+            401: begin
+              retorno := '401: ' + e.ErrorMessage;
+              ShowMessage('Token não enviado ou inválido');
+            end;
+            //Se o token informado for inválido 403
+            403: begin
+              retorno := '403: ' + e.ErrorMessage;
+              ShowMessage('Token sem permissão');
+            end;
+            //Se não encontrar o que foi requisitado
+            404:begin
+              retorno := '404: ' + e.ErrorMessage;
+              ShowMessage('Não encontrado, verifique o retorno para mais informações');
+            end;
+            //Caso contrário
+            else
+              retorno := HTTP.ResponseText + ': ' + e.ErrorMessage;
+              ShowMessage('Erro desconhecido, verifique o retorno para mais informações');
+          end;
+
+      end;
+      
+    finally
+      conteudo.Free();
+      HTTP.Free();
+    end;
+
+    //Devolve o json de retorno da API
+    Result := retorno;
+  end;
+
+
+  //Envia CTe
+  function emitirCTe(token, conteudo: String; isTxt: boolean): String;
+  var
+    conteudoEnviar: TStringStream;
+    urlEnvio, retorno: String;
+  begin
+    conteudoEnviar := TStringStream.Create(UTF8Encode(conteudo));
+    //Informa a url para onde deve ser enviado
+    urlEnvio :=  'https://cte.ns.eti.br/cte/issue';
+
+    retorno := enviaConteudoParaAPI(token, conteudoEnviar, urlEnvio, isTxt);
+    Result := retorno;
+  end;
+
+
+  //Consulta status de processamento do CTe
+  function consultarStatusProcessamento(token, chCTe, nRec, tpAmb: String): String;
+  var
+    json: TStringStream;
+    urlEnvio, retorno: String;
+  begin
+    //Monta o Json
+    json := TStringStream.Create('{' +
+        '"X-AUTH-TOKEN": "' + token + '",' +
+				'"chCTe": "' + chCTe + '",' +
+				'"tpAmb": "' + tpAmb + '",' +
+				'"nRec": "' + nRec + '"' +
+		'}');
+
+    //Informa a url para onde deve ser enviado
+    urlEnvio := 'https://cte.ns.eti.br/cte/issueStatus';
+
+    //Envia o json para a url
+    retorno := enviaConteudoParaAPI(token, json, urlEnvio, false);
+
+    //Devolve o retorno da API
+    Result := retorno;
+  end;
+
+
+  //Cancela CTe
+  function cancelaCTe(token, chCTe, tpAmb, nProt, xJust: String): String;
+  var
+    json: TStringStream;
+    dhEvento, urlEnvio, retorno: String;
+  begin
+    //Pega data, hora e concatena no formato predeterminado
+    dhEvento := FormatDateTime('yyyy-mm-dd',Now) + 'T' + FormatDateTime('hh:mm:ss', Now);
+
+    //Monta o Json
+    json := TStringStream.Create('{' +
+        '"X-AUTH-TOKEN": "' + token + '",' +
+        '"chCTe": "' + chCTe + '",' +
+	    	'"tpAmb": "' + tpAmb + '",' +
+	    	'"dhEvento": "' + dhEvento + '",' +
+	    	'"nProt": "' + nProt + '",' +
+	    	'"xJust": "' + xJust + '"' +
+		'}');
+
+    //Informa a url para onde deve ser enviado
+    urlEnvio := 'https://cte.ns.eti.br/cte/cancel';
+
+    //Envia o json para a url
+    retorno := enviaConteudoParaAPI(token, json, urlEnvio, false);
+
+    //Devolve o retorno da API
+    Result := retorno;
+  end;
+
+
+  //CCe de CTe
+  function CCeCTe(token, chCTe, tpAmb, nSeqEvento, grupoAlterado, campoAlterado, valorAlterado, nroItemAlterado: String): String;
+  var
+    json: TStringStream;
+    dhEvento, urlEnvio, retorno: String;
+  begin
+    //Pega data, hora e concatena no formato predeterminado
+    dhEvento := FormatDateTime('yyyy-mm-dd',Now) + 'T' + FormatDateTime('hh:mm:ss', Now);
+
+    //Monta o Json
+    json := TStringStream.Create('{' +
+        '"X-AUTH-TOKEN": "' + token + '",' +
+		    '"chCTe": "' + chCTe + '",' +
+		    '"tpAmb": "' + tpAmb + '",' +
+		    '"dhEvento": "' + dhEvento + '",' +
+		    '"nSeqEvento": "' + nSeqEvento + '",' +
+		    '"infCorrecao": [{' +
+		        '"grupoAlterado": "' + grupoAlterado + '",' +
+		        '"campoAlterado": "' + campoAlterado + '",' +
+		        '"valorAlterado": "' + valorAlterado + '",' +
+		        '"nroItemAlterado": "' + nroItemAlterado + '"}]' +
+		'}');
+
+    //Informa a url para onde deve ser enviado
+    urlEnvio := 'https://cte.ns.eti.br/cte/cce';
+
+    //Envia o json para a url
+    retorno := enviaConteudoParaAPI(token, json, urlEnvio, false);
+
+    //Devolve o retorno da API
+    Result := retorno;
+  end;
+
+
+  //Download de CTe
+  function downloadCTe(token, chCTe, tpAmb, tpDown: String; exibeNaTela: boolean): String;
+  var
+    json: TStringStream;
+    baixarXML, baixarPDF, baixarJSON: boolean;
+    caminho, status, urlEnvio, retorno: String;
+  begin
+    //Monta o Json
+    json := TStringStream.Create('{' +
+        '"X-AUTH-TOKEN": "' + token + '",' +
+				'"chCTe": "' + chCTe + '",' +
+				'"tpDown": "' + tpDown + '",' +
+				'"tpAmb": "' + tpAmb + '"' +
+		'}');
+
+    //Informa a url para onde deve ser enviado
+    urlEnvio := 'https://cte.ns.eti.br/cte/get';
+
+    //Envia o json para a url
+    retorno := enviaConteudoParaAPI(token, json, urlEnvio, false);
+
+    //Pega o status de retorno da requisição
+    status := Copy(retorno, Pos('"status": ', retorno) + 11, 3);
+
+    //Informa o diretorio onde salvar o arquivo
+    caminho := '';
+
+    //Checa o que baixar com base no tpDown informado
+    if Pos('X', tpDown) <> 0 then
+      baixarXML := true;
+    if Pos('P', tpDown) <> 0 then
+      baixarPDF := true;
+    if Pos('J', tpDown) <> 0 then
+      baixarJSON := true;
+
+    //Se o retorno da API for positivo, salva o que foi solicitado
+    if status = '200' then
+    begin
+      //Checa se deve baixar XML
+      if baixarXML = true then
+        salvaXML(retorno, caminho, chCTe);
+
+      //Checa se deve baixar JSON
+      if baixarJSON = true then
+        //Se não baixou XML, baixa JSON
+        if baixarXML <> true then
+          salvaJSON(retorno, caminho, chCTe);
+
+      //Checa se deve baixar PDF
+      if baixarPDF = true then
+        salvaPDF(retorno, caminho, chCTe);
+        //Caso tenha sido marcada a opção de de exibir em tela, abre o PDF salvo
+        if exibeNaTela then
+          ShellExecute(0, nil, PChar(caminho + chCTe + '-cte.pdf'), nil, nil, SW_SHOWNORMAL);
+    end
+    else
+    begin
+      Showmessage('Ocorreu um erro, veja o Retorno da API para mais informações');
+    end;
+
+    //Devolve o retorno da API
+    Result := retorno;
+  end;
+
+
+  //Função para salvar o XML de retorno
+  function salvaXML(retorno, caminho, chCTe: String): String;
+  var
+    arquivo: TextFile;
+    inicioRetorno, finalRetorno: Integer;
+    conteudoSalvar, localParaSalvar: String;
+  begin
+    //Seta o caminho para o arquivo XML
+    localParaSalvar := caminho + chCTe + '-cte.xml';
+
+    //Associa o arquivo ao caminho
+    AssignFile(arquivo, localParaSalvar);
+    //Abre para escrita o arquivo
+    Rewrite(arquivo);
+
+    //Separa o retorno
+    inicioRetorno := Pos('"xml":"<', retorno) + 7;
+    finalRetorno := Pos('/cteProc>', retorno) + 9;
+
+    //Copia o retorno
+    conteudoSalvar := Copy(retorno, inicioRetorno, finalRetorno - inicioRetorno);
+    //Ajeita o XML retirando as barras antes das aspas duplas
+    conteudoSalvar := StringReplace(conteudoSalvar, '\"', '"', [rfReplaceAll, rfIgnoreCase]);
+
+    //Escreve o retorno no arquivo
+    Writeln(arquivo, conteudoSalvar);
+
+    //Fecha o arquivo
+    CloseFile(arquivo);
+  end;
+
+
+  //Função para salvar o JSON de retorno
+  function salvaJSON(retorno, caminho, chCTe: String): String;
+  var
+    arquivo: TextFile;
+    inicioRetorno, finalRetorno: Integer;
+    conteudoSalvar, localParaSalvar: String;
+  begin
+    //Seta o caminho para o arquivo JSON
+    localParaSalvar := caminho + chCTe + '-cte.json';
+
+    //Associa o arquivo ao caminho
+    AssignFile(arquivo, localParaSalvar);
+    //Abre para escrita o arquivo
+    Rewrite(arquivo);
+
+    //Separa o retorno
+    inicioRetorno := Pos('"cteProc":', retorno) + 10;
+
+    //Checa se no retorno existe base64 de PDF
+    if(Pos('"pdf":"', retorno) > 0) then
+    begin
+      //Se existir, o json vai até onde começa a tag de pdf
+      finalRetorno := Pos('"pdf":"', retorno) - 1;
+    end
+    else
+    begin
+      //Se não existir, o json vai até o final
+      finalRetorno := Length(retorno);
+    end;
+
+    //Copia o retorno
+    conteudoSalvar := Copy(retorno, inicioRetorno, finalRetorno - inicioRetorno);
+
+    //Escreve o retorno no arquivo
+    Writeln(arquivo, conteudoSalvar);
+
+    //Fecha o arquivo
+    CloseFile(arquivo);
+  end;
+
+
+  //Função para salvar o PDF de retorno
+  function salvaPDF(retorno, caminho, chCTe: String): String;
+  var
+    inicioRetorno, finalRetorno: Integer;
+    conteudoSalvar, localParaSalvar: String;
+    MStream:TMemoryStream;
+    Decoder:TIdDecoderMIME; //Disponível na aba 'Indy Misc'
+  begin
+    ////Seta o caminho para o arquivo PDF
+    localParaSalvar := caminho + chCTe + '-cte.pdf';
+
+    //Separa o base64
+    inicioRetorno := Pos('"pdf":"', retorno) + 7;
+    finalRetorno := Length(retorno);
+
+    //Copia o base64
+    conteudoSalvar := Copy(retorno, inicioRetorno, finalRetorno - inicioRetorno);
+
+    //Inicializa o decoder e o memory stream
+    Decoder := TIdDecoderMIME.Create(nil);
+    MStream := TMemoryStream.Create;
+
+    //Decodifica o base64 e coloca no TMemoryStream
+    Decoder.DecodeStream(conteudoSalvar, MStream);
+    //Salva o conteúdo do TMemoryStream no caminho indicado
+    MStream.SaveToFile(localParaSalvar);
+
+    FreeAndNil(Decoder);
+    FreeAndNil(MStream);
+  end;
+
+
+end.
